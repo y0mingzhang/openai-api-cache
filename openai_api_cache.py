@@ -40,7 +40,7 @@ class OpenAIAPICache:
     """ A Redis cache wrapper for OpenAI API requests """
     def __init__(self, api_key, port=6379):
         logger.info(f"Setting OpenAI API key: {api_key}")
-        self.api_key = api_key
+        openai.api_key = api_key
         logger.info(f"Connecting to Redis DB on port {port}")
         self.r = redis.Redis(host="localhost", port=port)
 
