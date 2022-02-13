@@ -1,11 +1,20 @@
 """ A redis-based cache wrapper for OpenAI API to avoid duplicate requests """
-import redis
-import openai
+import hashlib
 import collections
 import pickle
 import logging
 
+import redis
+import openai
+
 logger = logging.getLogger(name="OpenAIAPICache")
+
+def deterministic_hash(data) -> int:
+    try:
+        data_str = str(data).encode("utf-8")
+    except:
+        raise Exception(f"Unable to convert type {type(data)} to string.")
+    return int(hashlib.sha512(data_str).hexdigest(), 16)
 
 
 class FrozenDict:
@@ -20,8 +29,8 @@ class FrozenDict:
             self.data[key] = value
 
     def __hash__(self):
-        ordered_keys = sorted(self.data.keys(), key=hash)
-        return hash(tuple((k, self.data[k]) for k in ordered_keys))
+        ordered_keys = sorted(self.data.keys(), key=deterministic_hash)
+        return deterministic_hash(tuple((k, self.data[k]) for k in ordered_keys))
 
     def __getitem__(self, key):
         return self.data[key]
@@ -67,3 +76,4 @@ class OpenAIAPICache:
         self.r.hset(hashval, "data", data)
         
         return resp
+
