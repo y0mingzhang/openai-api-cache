@@ -3,6 +3,9 @@ import hashlib
 import collections
 import pickle
 import logging
+import time
+
+
 
 import redis
 import openai
@@ -44,6 +47,21 @@ class FrozenDict:
     def __eq__(self, other):
         return self.data == other.data
 
+class RateLimiter:
+    def __init__(self, window: float, max_rate: int):
+        self.window = window
+        self.max_rate = max_rate
+        self.backoff_time = 1.0
+
+    def backoff(self):
+        logger.debug(f"Backing off for {self.backoff_time} seconds")
+        time.sleep(self.backoff_time)
+        self.backoff_time *= 2
+        logger.debug(f"Setting backoff time to {self.backoff_time} seconds")
+
+    def add_event(self):
+        self.backoff_time = 1.0
+        time.sleep(self.window / self.max_rate)
 
 class OpenAIAPICache:
     """ A Redis cache wrapper for OpenAI API requests """
@@ -52,6 +70,9 @@ class OpenAIAPICache:
         openai.api_key = api_key
         logger.info(f"Connecting to Redis DB on port {port}")
         self.r = redis.Redis(host="localhost", port=port)
+
+        # max 60 requests per 60 seconds
+        self.rate_limiter = RateLimiter(60.0, 60)
 
     def generate(self, **kwargs):
         query = FrozenDict(kwargs)
@@ -69,11 +90,24 @@ class OpenAIAPICache:
         else:
             logger.debug(f"Matching hash not found for query")
         
+        self.rate_limiter.add_event()
         logger.debug(f"Request Completion from OpenAI API...")
-        resp = openai.Completion.create(**kwargs)
+
+        while 1:
+            try:
+                resp = openai.Completion.create(**kwargs)
+                break
+            except openai.error.RateLimitError:
+                logger.warning("Getting a RateLimitError from openai API, backing off...")
+                self.rate_limiter.backoff()
+            except openai.error.InvalidRequestError:
+                # Shouldn't catch this one really, but openai is handling finetuned model
+                # in a buggy way, and sends out wrong InvalidRequestError for valid requests
+                logger.warning("Getting a InvalidRequestError from openai API, backing off...")
+                self.rate_limiter.backoff()
+            
         data = pickle.dumps((query, resp))
         logger.debug(f"Writing query and resp to Redis")
         self.r.hset(hashval, "data", data)
-        
         return resp
 
