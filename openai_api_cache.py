@@ -28,7 +28,10 @@ class FrozenDict:
             if not isinstance(key, collections.Hashable):
                 raise Exception(f"{type(key)} is not hashable")
             if not isinstance(value, collections.Hashable):
-                raise Exception(f"{type(value)} is not hashable")
+                if isinstance(value, collections.abc.Mapping):
+                    value = FrozenDict(value)
+                else:
+                    raise Exception(f"{type(value)} is not hashable")
             self.data[key] = value
 
     def __hash__(self):
@@ -46,6 +49,7 @@ class FrozenDict:
     
     def __eq__(self, other):
         return self.data == other.data
+
 
 class RateLimiter:
     def __init__(self, window: float, max_rate: int):
