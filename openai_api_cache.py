@@ -104,12 +104,7 @@ class OpenAIAPICache:
             except openai.error.RateLimitError:
                 logger.warning("Getting a RateLimitError from openai API, backing off...")
                 self.rate_limiter.backoff()
-            except openai.error.InvalidRequestError:
-                # Shouldn't catch this one really, but openai is handling finetuned model
-                # in a buggy way, and sends out wrong InvalidRequestError for valid requests
-                logger.warning("Getting a InvalidRequestError from openai API, backing off...")
-                self.rate_limiter.backoff()
-            
+
         data = pickle.dumps((query, resp))
         logger.debug(f"Writing query and resp to Redis")
         self.r.hset(hashval, "data", data)
