@@ -27,9 +27,9 @@ class FrozenDict:
     def __init__(self, mapping):
         self.data = {}
         for key, value in mapping.items():
-            if not isinstance(key, collections.Hashable):
+            if not isinstance(key, collections.abc.Hashable):
                 raise Exception(f"{type(key)} is not hashable")
-            if not isinstance(value, collections.Hashable):
+            if not isinstance(value, collections.abc.Hashable):
                 if isinstance(value, collections.abc.Mapping):
                     value = FrozenDict(value)
                 else:
