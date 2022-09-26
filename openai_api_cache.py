@@ -1,16 +1,17 @@
-""" A redis-based cache wrapper for OpenAI API to avoid duplicate requests """
+""" A redis-based cache wrapper for GPT-3/Jurassic-1 API to avoid duplicate requests """
 import hashlib
 import collections
 import pickle
 import logging
 import time
-
+import requests
 
 
 import redis
 import openai
 
 logger = logging.getLogger(name="OpenAIAPICache")
+
 
 def deterministic_hash(data) -> int:
     try:
@@ -21,7 +22,8 @@ def deterministic_hash(data) -> int:
 
 
 class FrozenDict:
-    """ frozen, hashable mapping """
+    """frozen, hashable mapping"""
+
     def __init__(self, mapping):
         self.data = {}
         for key, value in mapping.items():
@@ -46,7 +48,7 @@ class FrozenDict:
 
     def __repr__(self):
         return repr(self.data)
-    
+
     def __eq__(self, other):
         return self.data == other.data
 
@@ -67,11 +69,11 @@ class RateLimiter:
         self.backoff_time = 1.0
         time.sleep(self.window / self.max_rate)
 
-class OpenAIAPICache:
-    """ A Redis cache wrapper for OpenAI API requests """
-    def __init__(self, api_key, port=6379):
-        logger.info(f"Setting OpenAI API key: {api_key}")
-        openai.api_key = api_key
+
+class APICache:
+    """A Redis cache wrapper for GPT-3/Jurassic-1 API requests"""
+
+    def __init__(self, port):
         logger.info(f"Connecting to Redis DB on port {port}")
         self.r = redis.Redis(host="localhost", port=port)
 
@@ -93,16 +95,18 @@ class OpenAIAPICache:
             )
         else:
             logger.debug(f"Matching hash not found for query")
-        
+
         self.rate_limiter.add_event()
-        logger.debug(f"Request Completion from OpenAI API...")
+        logger.debug(f"Request Completion from {self.service} API...")
 
         while 1:
             try:
-                resp = openai.Completion.create(**kwargs)
+                resp = self.api_call(**kwargs)
                 break
             except openai.error.RateLimitError:
-                logger.warning("Getting a RateLimitError from openai API, backing off...")
+                logger.warning(
+                    "Getting a RateLimitError from openai API, backing off..."
+                )
                 self.rate_limiter.backoff()
 
         data = pickle.dumps((query, resp))
@@ -110,3 +114,29 @@ class OpenAIAPICache:
         self.r.hset(hashval, "data", data)
         return resp
 
+
+class OpenAIAPICache(APICache):
+    def __init__(self, api_key, port=6379):
+        logger.info(f"Setting OpenAI API key: {api_key}")
+        openai.api_key = api_key
+        super().__init__(port)
+
+    service = "OpenAI"
+    api_call = openai.Completion.create
+
+
+class Jurassic1APICache(APICache):
+    def __init__(self, api_key, port=6379):
+        self.api_key = api_key
+        super().__init__(port)
+
+    def api_call(self, model, **kwargs):
+
+        resp = requests.post(
+            f"https://api.ai21.com/studio/v1/{model}/complete",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json=kwargs,
+        )
+        return resp.json()
+
+    service = "AI23"
