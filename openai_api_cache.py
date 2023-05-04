@@ -32,6 +32,8 @@ class FrozenDict:
             if not isinstance(value, collections.abc.Hashable):
                 if isinstance(value, collections.abc.Mapping):
                     value = FrozenDict(value)
+                elif isinstance(value, collections.abc.Sequence):
+                    value = tuple(value)
                 else:
                     raise Exception(f"{type(value)} is not hashable")
             self.data[key] = value
@@ -72,8 +74,9 @@ class RateLimiter:
 
 class APICache(ABC):
     """Abstract base class for GPT-3/Jurassic cache wrappers.
-    
+
     Should not be instantiated on its own."""
+
     def __init__(self, port: int):
         logger.info(f"Connecting to Redis DB on port {port}")
         self.r = redis.Redis(host="localhost", port=port)
@@ -132,34 +135,40 @@ class OpenAIAPICache(APICache):
     """A cache wrapper for GPT-3 API calls.
 
     Typical usage example:
-    
+
       api = OpenAIAPICache(open("key.txt").read().strip(), 6379)
       resp = api.generate(model="text-davinci-002", prompt="This is a test", temperature=0.0)
     """
-    def __init__(self, api_key: str, port: int = 6379):
+
+    def __init__(self, api_key: str, port: int = 6379, mode: str = "completion"):
         """Initializes an OpenAI Cache Object.
 
         Args:
             api_key: A string of the user's OpenAI API key. It should look like
              "sk-abcd......".
             port: Port of the Redis backend.
+            mode: "completion" or "chat", determines which API to call
         """
         logger.info(f"Setting OpenAI API key: {api_key}")
         openai.api_key = api_key
+        if mode == "completion":
+            self.api_call = openai.Completion.create
+        elif mode == "chat":
+            self.api_call = openai.ChatCompletion.create
         super().__init__(port)
 
     service = "OpenAI"
-    api_call = openai.Completion.create
 
 
 class Jurassic1APICache(APICache):
     """A cache wrapper for AI21's Jurassic API calls.
 
     Typical usage example:
-    
+
       api = Jurassic1APICache(open("key.txt").read().strip(), 6379)
       resp = api.generate(model="j1-grande", prompt="This is a test", maxTokens=10)
     """
+
     def __init__(self, api_key, port=6379):
         """Initializes an Jurassic Cache Object.
 
@@ -172,7 +181,6 @@ class Jurassic1APICache(APICache):
         super().__init__(port)
 
     def api_call(self, model, **kwargs):
-
         resp = requests.post(
             f"https://api.ai21.com/studio/v1/{model}/complete",
             headers={"Authorization": f"Bearer {self.api_key}"},
