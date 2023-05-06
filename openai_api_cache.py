@@ -119,9 +119,9 @@ class APICache(ABC):
             try:
                 resp = self.api_call(**kwargs)
                 break
-            except openai.error.RateLimitError:
+            except (openai.error.RateLimitError, openai.error.APIError):
                 logger.warning(
-                    "Getting a RateLimitError from openai API, backing off..."
+                    "Getting an error from openai API, backing off..."
                 )
                 self.rate_limiter.backoff()
 
