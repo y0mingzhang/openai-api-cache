@@ -4,7 +4,7 @@ from distutils.core import setup
 
 setup(
     name="openai-api-cache",
-    version="0.2",
+    version="0.3",
     description="Redis-based Cache for OpenAI API calls.",
     author="Yiming Zhang",
     author_email="yimingz0@uchicago.edu",

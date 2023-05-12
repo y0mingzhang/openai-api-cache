@@ -4,8 +4,8 @@ import collections
 import pickle
 import logging
 import time
-import requests
 from abc import ABC
+from typing import Any
 
 import redis
 import openai
@@ -83,6 +83,7 @@ class APICache(ABC):
 
         # max 60 requests per 60 seconds
         self.rate_limiter = RateLimiter(60.0, 60)
+        self.costs = []
 
     def generate(self, overwrite_cache: bool = False, **kwargs):
         """Makes an API request if not found in cache, and returns the response.
@@ -120,19 +121,24 @@ class APICache(ABC):
                 resp = self.api_call(**kwargs)
                 break
             except (openai.error.RateLimitError, openai.error.APIError):
-                logger.warning(
-                    "Getting an error from openai API, backing off..."
-                )
+                logger.warning("Getting an error from openai API, backing off...")
                 self.rate_limiter.backoff()
 
         data = pickle.dumps((query, resp))
         logger.debug(f"Writing query and resp to Redis")
         self.r.hset(hashval, "data", data)
+        self.compute_cost(resp)
         return resp
+
+    def compute_cost(self, resp):
+        ...
+
+    def session_total_cost(self) -> float:
+        return sum(self.costs)
 
 
 class OpenAIAPICache(APICache):
-    """A cache wrapper for GPT-3 API calls.
+    """A cache wrapper for OpenAI's Chat and Completion API calls.
 
     Typical usage example:
 
@@ -151,41 +157,55 @@ class OpenAIAPICache(APICache):
         """
         logger.info(f"Setting OpenAI API key: {api_key}")
         openai.api_key = api_key
+        self.mode = mode
         if mode == "completion":
             self.api_call = openai.Completion.create
         elif mode == "chat":
             self.api_call = openai.ChatCompletion.create
         super().__init__(port)
 
+    def compute_cost(self, resp):
+        model = resp["model"]
+        usage = resp["usage"]
+        total_tokens = usage["total_tokens"]
+        prompt_tokens = usage["prompt_tokens"]
+        completion_tokens = usage["completion_tokens"]
+
+        if model.startswith("gpt-3.5-turbo"):
+            cost = 0.002 * total_tokens / 1000
+        elif model.startswith("gpt-4"):
+            prompt_basis = 0.03 if total_tokens <= 8000 else 0.06
+            completion_basis = 0.06 if total_tokens <= 8000 else 0.12
+            cost = (
+                prompt_basis * prompt_tokens + completion_basis * completion_tokens
+            ) / 1000
+        else:
+            assert False, f"not sure know how to compute cost for {model}"
+
+        self.costs.append(cost)
+
     service = "OpenAI"
 
 
-class Jurassic1APICache(APICache):
-    """A cache wrapper for AI21's Jurassic API calls.
+class LLaMACPPCache(APICache):
+    """A cache wrapper for llama-cpp completion calls."""
 
-    Typical usage example:
-
-      api = Jurassic1APICache(open("key.txt").read().strip(), 6379)
-      resp = api.generate(model="j1-grande", prompt="This is a test", maxTokens=10)
-    """
-
-    def __init__(self, api_key, port=6379):
-        """Initializes an Jurassic Cache Object.
-
-        Args:
-            api_key: A string of the user's OpenAI API key. It should look like
-             "VlwY..........".
-            port: Port of the Redis backend.
-        """
-        self.api_key = api_key
+    def __init__(self, model_path: str, port: int = 6379, **kwargs: dict[str, Any]):
+        try:
+            import llama_cpp
+        except:
+            assert False, "Install llama-cpp-python."
+        logger.info(f"Loading LLaMA weights from {model_path}")
+        self.model_spec = {"model_path": model_path} | kwargs
+        self.llama = llama_cpp.Llama(model_path, **kwargs)
         super().__init__(port)
 
-    def api_call(self, model, **kwargs):
-        resp = requests.post(
-            f"https://api.ai21.com/studio/v1/{model}/complete",
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json=kwargs,
-        )
-        return resp.json()
+    def generate(self, overwrite_cache: bool = False, **kwargs):
+        # inject model_spec into query for cache correctness
+        return super().generate(overwrite_cache, model_spec=self.model_spec, **kwargs)
 
-    service = "AI23"
+    def api_call(self, model_spec, **kwargs):
+        # pop model_spec from query
+        return self.llama(**kwargs)
+
+    service = "llama-cpp"

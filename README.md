@@ -2,7 +2,7 @@
 
 ## What is this
 
-A cache wrapper for GPT-3/Jurassic API requests to avoid duplicate requests.
+A cache wrapper for OpenAI's API to avoid duplicate requests.
 
 ## Dependency
 
@@ -18,6 +18,7 @@ it runs on!
 
 ## Example Usage
 
+**Completion mode**
 ```python
 api_key = open("key.txt").read().strip()
 api = OpenAIAPICache(api_key, port=6379)
@@ -27,4 +28,19 @@ resp = api.generate(
     prompt="testing..",
     max_tokens=50
 )
+
+```
+
+**Chat mode**
+```python
+api_key = open("key.txt").read().strip()
+api = OpenAIAPICache(api_key, port=6379)
+
+resp = api.generate(
+    model="gpt-4",
+    messages=[
+        {"role": "user", "content": "Hello!"}
+    ]
+)
+
 ```
