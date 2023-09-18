@@ -4,10 +4,10 @@ from distutils.core import setup
 
 setup(
     name="openai-api-cache",
-    version="0.3",
+    version="0.4",
     description="Redis-based Cache for OpenAI API calls.",
     author="Yiming Zhang",
-    author_email="yimingz0@uchicago.edu",
+    author_email="yimingz3@cs.cmu.edu",
     py_modules=["openai_api_cache"],
-    install_requires=["requests", "openai", "redis"],
+    install_requires=["openai", "redis"],
 )

@@ -146,17 +146,13 @@ class OpenAIAPICache(APICache):
       resp = api.generate(model="text-davinci-002", prompt="This is a test", temperature=0.0)
     """
 
-    def __init__(self, api_key: str, port: int = 6379, mode: str = "completion"):
+    def __init__(self, port: int = 6379, mode: str = "completion"):
         """Initializes an OpenAI Cache Object.
 
         Args:
-            api_key: A string of the user's OpenAI API key. It should look like
-             "sk-abcd......".
             port: Port of the Redis backend.
             mode: "completion" or "chat", determines which API to call
         """
-        logger.info(f"Setting OpenAI API key: {api_key}")
-        openai.api_key = api_key
         self.mode = mode
         if mode == "completion":
             self.api_call = openai.Completion.create
@@ -164,48 +160,4 @@ class OpenAIAPICache(APICache):
             self.api_call = openai.ChatCompletion.create
         super().__init__(port)
 
-    def compute_cost(self, resp):
-        model = resp["model"]
-        usage = resp["usage"]
-        total_tokens = usage["total_tokens"]
-        prompt_tokens = usage["prompt_tokens"]
-        completion_tokens = usage["completion_tokens"]
-
-        if model.startswith("gpt-3.5-turbo"):
-            cost = 0.002 * total_tokens / 1000
-        elif model.startswith("gpt-4"):
-            prompt_basis = 0.03 if total_tokens <= 8000 else 0.06
-            completion_basis = 0.06 if total_tokens <= 8000 else 0.12
-            cost = (
-                prompt_basis * prompt_tokens + completion_basis * completion_tokens
-            ) / 1000
-        else:
-            assert False, f"not sure know how to compute cost for {model}"
-
-        self.costs.append(cost)
-
     service = "OpenAI"
-
-
-class LLaMACPPCache(APICache):
-    """A cache wrapper for llama-cpp completion calls."""
-
-    def __init__(self, model_path: str, port: int = 6379, **kwargs: dict[str, Any]):
-        try:
-            import llama_cpp
-        except:
-            assert False, "Install llama-cpp-python."
-        logger.info(f"Loading LLaMA weights from {model_path}")
-        self.model_spec = {"model_path": model_path} | kwargs
-        self.llama = llama_cpp.Llama(model_path, **kwargs)
-        super().__init__(port)
-
-    def generate(self, overwrite_cache: bool = False, **kwargs):
-        # inject model_spec into query for cache correctness
-        return super().generate(overwrite_cache, model_spec=self.model_spec, **kwargs)
-
-    def api_call(self, model_spec, **kwargs):
-        # pop model_spec from query
-        return self.llama(**kwargs)
-
-    service = "llama-cpp"
