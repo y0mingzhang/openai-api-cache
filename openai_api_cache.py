@@ -4,13 +4,12 @@ import collections
 import pickle
 import logging
 import time
+import threading
 from abc import ABC
-from typing import Any
 
 import redis
-import openai
 
-logger = logging.getLogger(name="OpenAIAPICache")
+logger = logging.getLogger(name="openai_api_cache")
 
 
 def deterministic_hash(data) -> int:
@@ -56,34 +55,40 @@ class FrozenDict:
 
 
 class RateLimiter:
-    def __init__(self, window: float, max_rate: int):
-        self.window = window
-        self.max_rate = max_rate
-        self.backoff_time = 1.0
+    def __init__(self):
+        self.min_backoff = self.backoff_time = 1.0
+        self.max_backoff = 60.0
+        self.lock = threading.Lock()
 
     def backoff(self):
-        logger.debug(f"Backing off for {self.backoff_time} seconds")
+        logger.warning(f"Backing off for {self.backoff_time:.1f} seconds")
         time.sleep(self.backoff_time)
-        self.backoff_time *= 2
-        logger.debug(f"Setting backoff time to {self.backoff_time} seconds")
+        with self.lock:
+            self.backoff_time = min(self.backoff_time * 2, self.max_backoff)
+        logger.debug(f"Setting backoff time to {self.backoff_time:.1f} seconds")
 
     def add_event(self):
-        self.backoff_time = 1.0
-        time.sleep(self.window / self.max_rate)
+        with self.lock:
+            self.backoff_time = max(self.min_backoff, self.backoff_time * 0.75)
 
 
 class APICache(ABC):
-    """Abstract base class for GPT-3/Jurassic cache wrappers.
+    """Abstract base class for other cache wrappers.
 
     Should not be instantiated on its own."""
 
-    def __init__(self, port: int):
-        logger.info(f"Connecting to Redis DB on port {port}")
-        self.r = redis.Redis(host="localhost", port=port)
+    service = ""
+    exceptions_to_catch = tuple()
+
+    def __init__(self, **redis_kwargs: dict):
+        self.r = redis.Redis(host="localhost", **redis_kwargs)
 
         # max 60 requests per 60 seconds
-        self.rate_limiter = RateLimiter(60.0, 60)
+        self.rate_limiter = RateLimiter()
         self.costs = []
+
+    def api_call(self, *args, **kwargs):
+        raise NotImplementedError("api_call() is not implemented")
 
     def generate(self, overwrite_cache: bool = False, **kwargs):
         """Makes an API request if not found in cache, and returns the response.
@@ -120,21 +125,15 @@ class APICache(ABC):
             try:
                 resp = self.api_call(**kwargs)
                 break
-            except (openai.error.RateLimitError, openai.error.APIError):
-                logger.warning("Getting an error from openai API, backing off...")
+            except self.exceptions_to_catch as e:
+                logger.warning(f"Getting an {type(e).__name__} from API, backing off...")
                 self.rate_limiter.backoff()
 
         data = pickle.dumps((query, resp))
         logger.debug(f"Writing query and resp to Redis")
         self.r.hset(hashval, "data", data)
-        self.compute_cost(resp)
+
         return resp
-
-    def compute_cost(self, resp):
-        ...
-
-    def session_total_cost(self) -> float:
-        return sum(self.costs)
 
 
 class OpenAIAPICache(APICache):
@@ -146,8 +145,18 @@ class OpenAIAPICache(APICache):
       resp = api.generate(model="text-davinci-002", prompt="This is a test", temperature=0.0)
     """
 
-    def __init__(self, port: int = 6379, mode: str = "completion"):
-        """Initializes an OpenAI Cache Object.
+    import openai
+
+    service = "OpenAI"
+    exceptions_to_catch = (
+        openai.error.RateLimitError,
+        openai.error.APIError,
+        openai.error.Timeout,
+        openai.error.ServiceUnavailableError,
+    )
+
+    def __init__(self, mode: str = "completion", **redis_kwargs: dict):
+        """Initializes an OpenAIAPICache Object.
 
         Args:
             port: Port of the Redis backend.
@@ -155,9 +164,25 @@ class OpenAIAPICache(APICache):
         """
         self.mode = mode
         if mode == "completion":
-            self.api_call = openai.Completion.create
+            self.api_call = self.openai.Completion.create
         elif mode == "chat":
-            self.api_call = openai.ChatCompletion.create
-        super().__init__(port)
+            self.api_call = self.openai.ChatCompletion.create
+        super().__init__(**redis_kwargs)
 
-    service = "OpenAI"
+
+class CohereAPICache(APICache):
+    """A cache wrapper for Cohere Generate API calls."""
+
+    import cohere
+
+    service = "cohere"
+
+    def __init__(self, client: cohere.Client, **redis_kwargs: dict):
+        """Initializes a CohereAPICache Object.
+
+        Args:
+            port: Port of the Redis backend.
+            client: Authenticated cohere client
+        """
+        self.api_call = client.generate
+        super().__init__(**redis_kwargs)
