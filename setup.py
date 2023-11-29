@@ -9,5 +9,5 @@ setup(
     author="Yiming Zhang",
     author_email="yimingz3@cs.cmu.edu",
     py_modules=["openai_api_cache"],
-    install_requires=["openai", "cohere", "redis"],
+    install_requires=["openai==0.28", "cohere", "redis"],
 )
