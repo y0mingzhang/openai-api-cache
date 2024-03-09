@@ -149,13 +149,13 @@ class OpenAIAPICache(APICache):
 
     service = "OpenAI"
     exceptions_to_catch = (
-        openai.error.RateLimitError,
-        openai.error.APIError,
-        openai.error.Timeout,
-        openai.error.ServiceUnavailableError,
+        openai.RateLimitError,
+        openai.APIError,
+        openai.APITimeoutError,
+        openai.InternalServerError,
     )
 
-    def __init__(self, mode: str = "completion", **redis_kwargs: dict):
+    def __init__(self, client: openai.OpenAI, mode: str = "chat", **redis_kwargs: dict):
         """Initializes an OpenAIAPICache Object.
 
         Args:
@@ -164,9 +164,9 @@ class OpenAIAPICache(APICache):
         """
         self.mode = mode
         if mode == "completion":
-            self.api_call = self.openai.Completion.create
+            self.api_call = client.completions.create
         elif mode == "chat":
-            self.api_call = self.openai.ChatCompletion.create
+            self.api_call = client.chat.completions.create
         super().__init__(**redis_kwargs)
 
 
